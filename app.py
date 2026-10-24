@@ -1,9 +1,13 @@
 import streamlit as st
 import feedparser
 import pandas as pd
-import sqlite3
+import os
+from sqlalchemy import create_engine
 
-st.set_page_config(page_title="Dashboard Karhutla Real-Time", layout="wide")
+st.set_page_config(page_title="Dashboard Karhutla (Docker Compose)", layout="wide")
+
+# Baca DB_URL dari environment variable Docker, fallback ke localhost jika dijalankan manual
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
 
 @st.cache_data(ttl=600)
 def run_etl_realtime():
@@ -22,19 +26,18 @@ def run_etl_realtime():
     df = pd.DataFrame(data)
     df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'])
 
-    conn = sqlite3.connect('karhutla_trends.db')
-    df.to_sql('tren_karhutla', conn, if_exists='replace', index=False)
-    conn.close()
+    engine = create_engine(DB_URL)
+    df.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
 
     return df
 
-st.title("🔥 Dashboard Monitoring Karhutla (Real-Time)")
-st.caption("Data diperbarui otomatis langsung dari sumber berita terkini.")
+st.title("🔥 Dashboard Monitoring Karhutla (Multi-Container Docker)")
+st.caption("Aplikasi Streamlit dan PostgreSQL berjalan bersamaan via Docker Compose.")
 
 if st.sidebar.button("🔄 Refresh Data Sekarang"):
     st.cache_data.clear()
 
-with st.spinner('Narik data terbaru...'):
+with st.spinner('Narik data terbaru ke PostgreSQL...'):
     df = run_etl_realtime()
 
 col1, col2 = st.columns(2)
