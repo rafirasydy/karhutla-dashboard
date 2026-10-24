@@ -7,14 +7,17 @@ from sqlalchemy import create_engine
 
 st.set_page_config(page_title="Dashboard Karhutla (+ Telegram Alert)", layout="wide")
 
-# Ambil kredensial Telegram dari Streamlit Secrets jika ada, atau fallback ke variabel lokal
-TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "TOKEN_BOT_KAMU")
-TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "5141661421")
+# Gunakan try-except agar tidak crash saat running di Docker lokal
+try:
+    TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
+    TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+except Exception:
+    TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
+    TELEGRAM_CHAT_ID = "5141661421"
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
 
 def get_db_engine():
-    # Coba konek ke PostgreSQL (buat di Docker lokal), kalau gagal otomatis pakai SQLite (buat Streamlit Cloud)
     try:
         engine = create_engine(DB_URL)
         with engine.connect() as conn:
