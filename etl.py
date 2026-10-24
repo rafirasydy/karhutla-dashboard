@@ -1,4 +1,5 @@
 import os
+import re
 import feedparser
 import pandas as pd
 import requests
@@ -7,6 +8,13 @@ from sqlalchemy import create_engine
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5141661421")
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///karhutla_trends.db")
+
+def extract_companies(text):
+    pattern = r'\bPT\.?\s+[A-Z][a-zA-Z0-9\.\&\-]+(?:\s+[A-Z][a-zA-Z0-9\.\&\-]+)*'
+    matches = re.findall(pattern, text)
+    if matches:
+        return ", ".join(list(set(matches)))
+    return "Tidak Terdeteksi"
 
 def send_telegram_alert(judul, link):
     if not TELEGRAM_TOKEN:
@@ -31,6 +39,7 @@ def run_etl():
         sumber = entry.source.title if 'source' in entry else 'Unknown'
         waktu = entry.published
         link = entry.link
+        perusahaan = extract_companies(judul)
 
         if any(kw in judul.lower() for kw in keywords_darurat):
             send_telegram_alert(judul, link)
@@ -39,19 +48,22 @@ def run_etl():
             'judul': judul,
             'sumber': sumber,
             'waktu_terbit': waktu,
-            'link': link
+            'link': link,
+            'perusahaan': perusahaan
         })
 
     df_new = pd.DataFrame(data)
     if df_new.empty:
         return
 
-    df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'])
+    df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
     engine = create_engine(DB_URL)
 
     try:
         df_old = pd.read_sql('tren_karhutla', engine)
-        df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'])
+        df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
+        if 'perusahaan' not in df_old.columns:
+            df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
         df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
     except Exception:
         df_combined = df_new

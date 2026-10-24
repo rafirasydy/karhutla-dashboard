@@ -3,6 +3,7 @@ import feedparser
 import pandas as pd
 import os
 import requests
+import re
 import plotly.express as px
 from sqlalchemy import create_engine
 
@@ -25,6 +26,14 @@ def get_db_engine():
         return engine
     except Exception:
         return create_engine("sqlite:///karhutla_trends.db")
+
+def extract_companies(text):
+    # Ekstraksi pola nama perusahaan (contoh: PT Sampoerna, PT. Mayawana Persada)
+    pattern = r'\bPT\.?\s+[A-Z][a-zA-Z0-9\.\&\-]+(?:\s+[A-Z][a-zA-Z0-9\.\&\-]+)*'
+    matches = re.findall(pattern, text)
+    if matches:
+        return ", ".join(list(set(matches)))
+    return "Tidak Terdeteksi"
 
 def send_telegram_alert(judul, link):
     if TELEGRAM_TOKEN == "TOKEN_BOT_KAMU" or not TELEGRAM_TOKEN:
@@ -50,6 +59,7 @@ def run_etl_realtime():
         sumber = entry.source.title if 'source' in entry else 'Unknown'
         waktu = entry.published
         link = entry.link
+        perusahaan = extract_companies(judul)
 
         if any(kw in judul.lower() for kw in keywords_darurat):
             send_telegram_alert(judul, link)
@@ -58,7 +68,8 @@ def run_etl_realtime():
             'judul': judul,
             'sumber': sumber,
             'waktu_terbit': waktu,
-            'link': link
+            'link': link,
+            'perusahaan': perusahaan
         })
 
     df_new = pd.DataFrame(data)
@@ -70,6 +81,8 @@ def run_etl_realtime():
         try:
             df_old = pd.read_sql('tren_karhutla', engine)
             df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
+            if 'perusahaan' not in df_old.columns:
+                df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
             df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
         except Exception:
             df_combined = df_new
@@ -83,7 +96,7 @@ def run_etl_realtime():
 
 # --- TAMPILAN DASHBOARD ---
 st.title("🔥 Dashboard Monitoring Karhutla Real-Time")
-st.caption("Monitoring publikasi media massa terkait Karhutla dan otomatisasi alert Telegram.")
+st.caption("Monitoring berita Karhutla, indikasi keterlibatan perusahaan, dan otomatisasi alert Telegram.")
 
 if st.sidebar.button("🔄 Refresh Data Sekarang", use_container_width=True):
     st.cache_data.clear()
@@ -91,19 +104,66 @@ if st.sidebar.button("🔄 Refresh Data Sekarang", use_container_width=True):
 with st.spinner('Narik data terbaru...'):
     df = run_etl_realtime()
 
-# Pastikan kolom waktu_terbit selalu bertipe datetime
 df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
+if 'perusahaan' not in df.columns:
+    df['perusahaan'] = df['judul'].apply(extract_companies)
+
+# Hitung jumlah perusahaan terdeteksi
+df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
+total_companies_found = df_company_only['perusahaan'].nunique()
 
 # Metric Section
-m1, m2, m3 = st.columns(3)
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Total Berita Terkumpul", len(df))
 m2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
+m3.metric("Perusahaan Terdeteksi", total_companies_found)
 
 latest_time = df['waktu_terbit'].max()
 if pd.notnull(latest_time):
-    m3.metric("Berita Terbaru", latest_time.strftime('%d %b %Y %H:%M'))
+    m4.metric("Berita Terbaru", latest_time.strftime('%d %b %Y %H:%M'))
 else:
-    m3.metric("Berita Terbaru", "-")
+    m4.metric("Berita Terbaru", "-")
+
+st.divider()
+
+# Section Perusahaan
+st.subheader("🏢 Perusahaan Terkait dalam Berita Karhutla")
+
+if not df_company_only.empty:
+    col_comp_chart, col_comp_list = st.columns([1, 1])
+    
+    with col_comp_chart:
+        company_counts = df_company_only['perusahaan'].value_counts().reset_index()
+        company_counts.columns = ['Perusahaan', 'Jumlah Berita']
+        
+        fig_company = px.bar(
+            company_counts.head(10),
+            x='Jumlah Berita',
+            y='Perusahaan',
+            orientation='h',
+            color='Jumlah Berita',
+            color_continuous_scale='Oranges',
+            text='Jumlah Berita'
+        )
+        fig_company.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=350)
+        st.plotly_chart(fig_company, use_container_width=True)
+        
+    with col_comp_list:
+        st.write("📌 **Daftar Berita yang Menyebutkan Perusahaan:**")
+        st.dataframe(
+            df_company_only[['perusahaan', 'judul', 'sumber', 'link']].sort_values(by='perusahaan'),
+            column_config={
+                "perusahaan": "Nama Perusahaan",
+                "judul": "Judul Berita",
+                "sumber": "Media",
+                "link": st.column_config.LinkColumn("Detail", display_text="Buka Artikel 🔗")
+            },
+            use_container_width=True,
+            height=300,
+            hide_index=True
+        )
+else:
+    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam judul berita terbaru.")
 
 st.divider()
 
@@ -124,7 +184,7 @@ with col_left:
         color_continuous_scale='Reds',
         text='Jumlah Berita'
     )
-    fig_bar.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=400)
+    fig_bar.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=350)
     st.plotly_chart(fig_bar, use_container_width=True)
 
 with col_right:
@@ -140,18 +200,19 @@ with col_right:
         line_shape='spline',
         color_discrete_sequence=['#FF4B4B']
     )
-    fig_line.update_layout(height=400, xaxis_title="Tanggal", yaxis_title="Jumlah Berita")
+    fig_line.update_layout(height=350, xaxis_title="Tanggal", yaxis_title="Jumlah Berita")
     st.plotly_chart(fig_line, use_container_width=True)
 
 st.divider()
 
 # Interactive Table Section
-st.subheader("📰 Daftar Berita Terbaru")
+st.subheader("📰 Semua Daftar Berita")
 st.dataframe(
-    df[['waktu_terbit', 'sumber', 'judul', 'link']].sort_values(by='waktu_terbit', ascending=False),
+    df[['waktu_terbit', 'sumber', 'perusahaan', 'judul', 'link']].sort_values(by='waktu_terbit', ascending=False),
     column_config={
         "waktu_terbit": st.column_config.DatetimeColumn("Waktu Terbit", format="DD MMM YYYY, HH:mm"),
         "sumber": "Sumber Media",
+        "perusahaan": "Perusahaan Terdeteksi",
         "judul": "Judul Berita",
         "link": st.column_config.LinkColumn("Akses Berita", display_text="Buka Artikel 🔗")
     },
