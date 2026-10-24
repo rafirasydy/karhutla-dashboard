@@ -13,7 +13,7 @@ try:
     TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
     TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except Exception:
-    TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
+    TELEGRAM_TOKEN = "TOKEN_BOT_KAMU"
     TELEGRAM_CHAT_ID = "5141661421"
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
@@ -116,6 +116,8 @@ def run_etl_realtime():
             })
 
     if not data and not df_old.empty:
+        if 'perusahaan' not in df_old.columns:
+            df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
         return df_old
 
     df_new = pd.DataFrame(data)
@@ -123,6 +125,9 @@ def run_etl_realtime():
         df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
 
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
+    if 'perusahaan' not in df_combined.columns:
+        df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
+
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
     return df_combined
 
@@ -132,6 +137,8 @@ def load_data():
     try:
         df = pd.read_sql('tren_karhutla', engine)
         df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
+        if 'perusahaan' not in df.columns:
+            df['perusahaan'] = df['judul'].apply(extract_companies)
         return df
     except Exception:
         return run_etl_realtime()
@@ -146,6 +153,10 @@ if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
         df = run_etl_realtime()
 else:
     df = load_data()
+
+# Pastikan kolom 'perusahaan' selalu tersedia di DataFrame
+if 'perusahaan' not in df.columns:
+    df['perusahaan'] = df['judul'].apply(extract_companies) if 'judul' in df.columns else "Tidak Terdeteksi"
 
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
