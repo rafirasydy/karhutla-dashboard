@@ -28,8 +28,6 @@ def get_db_engine():
         return create_engine("sqlite:///karhutla_trends.db")
 
 def extract_companies(text):
-    if not isinstance(text, str):
-        return "Tidak Terdeteksi"
     pattern = r'\bPT\.?\s+[A-Z][a-zA-Z0-9\.\&\-]+(?:\s+[A-Z][a-zA-Z0-9\.\&\-]+)*'
     matches = re.findall(pattern, text)
     if matches:
@@ -47,7 +45,9 @@ def send_telegram_alert(judul, link):
     except Exception as e:
         print(f"Gagal kirim notifikasi: {e}")
 
+@st.cache_data(ttl=600)
 def run_etl_realtime():
+    # Ambil berita karhutla umum + berita khusus perusahaan/PT
     queries = [
         "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
         "https://news.google.com/rss/search?q=karhutla+PT+OR+kebakaran+hutan+PT+OR+segel+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
@@ -80,40 +80,37 @@ def run_etl_realtime():
     if not df_new.empty:
         df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
 
-    engine = get_db_engine()
     try:
-        df_old = pd.read_sql('tren_karhutla', engine)
-        df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
-        df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
-    except Exception:
-        df_combined = df_new
+        engine = get_db_engine()
+        try:
+            df_old = pd.read_sql('tren_karhutla', engine)
+            df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
+            if 'perusahaan' not in df_old.columns:
+                df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
+            df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
+        except Exception:
+            df_combined = df_new
 
-    df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
-    df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
-    return df_combined
+        df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+        return df_combined
 
-@st.cache_data(ttl=300)
-def load_data():
-    engine = get_db_engine()
-    try:
-        df = pd.read_sql('tren_karhutla', engine)
-        df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
-        # Deteksi nama perusahaan di semua berita yang tersimpan
-        df['perusahaan'] = df['judul'].apply(extract_companies)
-        return df
-    except Exception:
-        return run_etl_realtime()
+    except Exception as e:
+        print(f"Gagal simpan ke DB: {e}")
+        return df_new
 
 # --- TAMPILAN DASHBOARD ---
 st.title("🔥 Dashboard Monitoring Karhutla Real-Time")
 st.caption("Monitoring berita Karhutla, indikasi keterlibatan perusahaan, dan otomatisasi alert Telegram.")
 
-if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
+if st.sidebar.button("🔄 Refresh Data Sekarang", use_container_width=True):
     st.cache_data.clear()
-    with st.spinner('Narik berita terbaru dari Google News...'):
-        df = run_etl_realtime()
-else:
-    df = load_data()
+
+with st.spinner('Narik data terbaru...'):
+    df = run_etl_realtime()
+
+df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
+if 'perusahaan' not in df.columns:
+    df['perusahaan'] = df['judul'].apply(extract_companies)
 
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
@@ -169,7 +166,7 @@ if not df_company_only.empty:
             hide_index=True
         )
 else:
-    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam judul berita database saat ini.")
+    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam judul berita terbaru.")
 
 st.divider()
 
