@@ -12,9 +12,10 @@ DB_URL = os.getenv("DATABASE_URL", "sqlite:///karhutla_trends.db")
 def extract_companies(text):
     if not isinstance(text, str):
         return "Tidak Terdeteksi"
+    clean_text = re.sub(r'<[^>]+>', '', text)
     pattern = r'\b(?:PT|CV)\.?\s*([A-Za-z0-9\.\&\-]+(?:\s+[A-Za-z0-9\.\&\-]+)*)'
-    matches = re.findall(pattern, text)
-    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan'}
+    matches = re.findall(pattern, clean_text)
+    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan', 'oleh', 'ke'}
     
     found = []
     for match in matches:
@@ -74,7 +75,10 @@ def run_etl():
             judul = entry.title
             sumber = entry.source.title if 'source' in entry else 'Unknown'
             waktu = entry.published
-            perusahaan = extract_companies(judul)
+            summary = entry.summary if 'summary' in entry else ''
+            
+            teks_lengkap = f"{judul} {summary}"
+            perusahaan = extract_companies(teks_lengkap)
 
             if any(kw in judul.lower() for kw in keywords_darurat):
                 send_telegram_alert(judul, link)
@@ -88,14 +92,11 @@ def run_etl():
                 'perusahaan': perusahaan
             })
 
-    if not data and not df_old.empty:
-        df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
-        df_old.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+    if not data:
         return
 
     df_new = pd.DataFrame(data)
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
-    df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
 
 if __name__ == "__main__":
