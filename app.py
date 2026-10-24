@@ -30,10 +30,29 @@ def get_db_engine():
 def extract_companies(text):
     if not isinstance(text, str):
         return "Tidak Terdeteksi"
-    pattern = r'\bPT\.?\s+[A-Z][a-zA-Z0-9\.\&\-]+(?:\s+[A-Z][a-zA-Z0-9\.\&\-]+)*'
+    
+    # Tangkap teks setelah kata PT atau CV
+    pattern = r'\b(?:PT|CV)\.?\s*([A-Za-z0-9\.\&\-]+(?:\s+[A-Za-z0-9\.\&\-]+)*)'
     matches = re.findall(pattern, text)
-    if matches:
-        return ", ".join(list(set(matches)))
+    
+    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan'}
+    
+    found = []
+    for match in matches:
+        words = match.split()
+        clean_words = []
+        for w in words:
+            clean_w = re.sub(r'[^\w\.\&\-]', '', w)
+            if clean_w.lower() in stop_words:
+                break
+            clean_words.append(clean_w)
+        if clean_words:
+            comp_name = " ".join(clean_words).strip(' .-&')
+            if len(comp_name) > 1:
+                found.append(f"PT {comp_name.upper()}")
+    
+    if found:
+        return ", ".join(list(set(found)))
     return "Tidak Terdeteksi"
 
 def send_telegram_alert(judul, link):
@@ -50,7 +69,6 @@ def send_telegram_alert(judul, link):
 def run_etl_realtime():
     engine = get_db_engine()
     
-    # 1. Ambil daftar link yang SUDAH ADA di database
     existing_links = set()
     try:
         df_old = pd.read_sql('tren_karhutla', engine)
@@ -61,18 +79,19 @@ def run_etl_realtime():
 
     queries = [
         "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=karhutla+PT+OR+kebakaran+hutan+PT+OR+segel+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
+        "https://news.google.com/rss/search?q=karhutla+PT&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=kebakaran+hutan+PT&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=segel+lahan+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
     ]
 
     data = []
-    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi']
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi', 'tersangka']
 
     for url in queries:
         feed = feedparser.parse(url)
         for entry in feed.entries:
             link = entry.link
             
-            # Skip jika berita ini sudah pernah diproses/tersimpan sebelumnya
             if link in existing_links:
                 continue
 
@@ -81,7 +100,6 @@ def run_etl_realtime():
             waktu = entry.published
             perusahaan = extract_companies(judul)
 
-            # Kirim notifikasi HANYA untuk berita baru yang darurat
             if any(kw in judul.lower() for kw in keywords_darurat):
                 send_telegram_alert(judul, link)
 
@@ -94,11 +112,13 @@ def run_etl_realtime():
                 'perusahaan': perusahaan
             })
 
-    if not data:
-        return df_old if not df_old.empty else pd.DataFrame(columns=['judul', 'sumber', 'waktu_terbit', 'link', 'perusahaan'])
+    if not data and not df_old.empty:
+        df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
+        return df_old
 
     df_new = pd.DataFrame(data)
-    df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
+    if not df_new.empty:
+        df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
 
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
     df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
@@ -126,6 +146,9 @@ if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
         df = run_etl_realtime()
 else:
     df = load_data()
+
+# Re-apply ekstraksi perusahaan ke seluruh data historis
+df['perusahaan'] = df['judul'].apply(extract_companies)
 
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
