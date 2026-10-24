@@ -7,12 +7,11 @@ from sqlalchemy import create_engine
 
 st.set_page_config(page_title="Dashboard Karhutla (+ Telegram Alert)", layout="wide")
 
-# Gunakan try-except agar tidak crash saat running di Docker lokal
 try:
     TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
     TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except Exception:
-    TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
+    TELEGRAM_TOKEN = "TOKEN_BOT_KAMU"
     TELEGRAM_CHAT_ID = "5141661421"
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
@@ -61,19 +60,30 @@ def run_etl_realtime():
             'link': link
         })
 
-    df = pd.DataFrame(data)
-    df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'])
+    df_new = pd.DataFrame(data)
+    df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'])
 
     try:
         engine = get_db_engine()
-        df.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+        
+        # Baca data lama dari DB kalau ada
+        try:
+            df_old = pd.read_sql('tren_karhutla', engine)
+            # Gabungkan data lama & baru, lalu hapus duplikat berdasarkan link
+            df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
+        except Exception:
+            df_combined = df_new
+
+        # Simpan kembali akumulasi data secara utuh
+        df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+        return df_combined
+
     except Exception as e:
         print(f"Gagal simpan ke DB: {e}")
-
-    return df
+        return df_new
 
 st.title("🔥 Dashboard Monitoring Karhutla (+ Telegram Alert)")
-st.caption("Aplikasi ini otomatis ngirim pesan ke Telegram kalau nemu berita berstatus darurat.")
+st.caption("Aplikasi ini otomatis akumulasi data berita dan ngirim alert Telegram.")
 
 if st.sidebar.button("🔄 Refresh Data Sekarang"):
     st.cache_data.clear()
@@ -82,7 +92,7 @@ with st.spinner('Narik data terbaru...'):
     df = run_etl_realtime()
 
 col1, col2 = st.columns(2)
-col1.metric("Total Berita Terkumpul", len(df))
+col1.metric("Total Berita Terkumpul (Akumulatif)", len(df))
 col2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
 
 st.divider()
