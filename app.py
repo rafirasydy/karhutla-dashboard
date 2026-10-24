@@ -13,7 +13,7 @@ try:
     TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
     TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except Exception:
-    TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
+    TELEGRAM_TOKEN = "TOKEN_BOT_KAMU"
     TELEGRAM_CHAT_ID = "5141661421"
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
@@ -31,11 +31,19 @@ def extract_companies(text):
     if not isinstance(text, str):
         return "Tidak Terdeteksi"
     
-    clean_text = re.sub(r'<[^>]+>', '', text)
-    pattern = r'\b(?:PT|CV)\.?\s+([A-Z0-9\.\&\-]+(?:\s+[A-Z0-9\.\&\-]+)*)'
+    clean_text = re.sub(r'<[^>]+>', ' ', text)
+    clean_text = re.sub(r'[·•|:-]', ' ', clean_text)
+    
+    pattern = r'\b(?:PT|CV)\.?\s+([A-Z][a-zA-Za-z0-9\.\&\-]*(?:\s+[A-Z][a-zA-Za-z0-9\.\&\-]*)*)'
     matches = re.findall(pattern, clean_text)
     
-    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan', 'oleh', 'ke', 'google', 'berita', 'dan', 'atau', 'untuk', 'pada', 'dari', 'dengan'}
+    stop_words = {
+        'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 
+        'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 
+        'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 
+        'kebakaran', 'lahan', 'hutan', 'oleh', 'ke', 'google', 
+        'berita', 'dan', 'atau', 'untuk', 'pada', 'dari', 'dengan', 'seperti'
+    }
     
     found = set()
     for match in matches:
@@ -49,7 +57,7 @@ def extract_companies(text):
         if clean_words:
             comp_name = " ".join(clean_words).strip(' .-&')
             if len(comp_name) > 1 and comp_name.lower() not in stop_words:
-                found.add(f"PT {comp_name.upper()}")
+                found.add(f"PT {comp_name.title()}")
     
     if found:
         return ", ".join(sorted(list(found)))
@@ -78,14 +86,15 @@ def run_etl_realtime():
         df_old = pd.DataFrame()
 
     queries = [
-        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=karhutla+PT&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=kebakaran+hutan+PT&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=segel+lahan+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
+        "https://news.google.com/rss/search?q=perusahaan+yg+terlibat+karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=pembekuan+izin+karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=perusahaan+penyebab+karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=tersangka+karhutla+korporasi&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id"
     ]
 
     data = []
-    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi', 'tersangka']
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi', 'tersangka', 'dibekukan']
 
     for url in queries:
         feed = feedparser.parse(url)
@@ -116,8 +125,7 @@ def run_etl_realtime():
             })
 
     if not data and not df_old.empty:
-        if 'perusahaan' not in df_old.columns:
-            df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
+        df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
         return df_old
 
     df_new = pd.DataFrame(data)
@@ -125,8 +133,7 @@ def run_etl_realtime():
         df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
 
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
-    if 'perusahaan' not in df_combined.columns:
-        df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
+    df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
 
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
     return df_combined
@@ -137,13 +144,11 @@ def load_data():
     try:
         df = pd.read_sql('tren_karhutla', engine)
         df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
-        if 'perusahaan' not in df.columns:
-            df['perusahaan'] = df['judul'].apply(extract_companies)
+        df['perusahaan'] = df['judul'].apply(extract_companies)
         return df
     except Exception:
         return run_etl_realtime()
 
-# --- TAMPILAN DASHBOARD ---
 st.title("🔥 Dashboard Monitoring Karhutla Real-Time")
 st.caption("Monitoring berita Karhutla, indikasi keterlibatan perusahaan, dan otomatisasi alert Telegram.")
 
@@ -154,13 +159,10 @@ if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
 else:
     df = load_data()
 
-if 'perusahaan' not in df.columns:
-    df['perusahaan'] = df['judul'].apply(extract_companies) if 'judul' in df.columns else "Tidak Terdeteksi"
-
+df['perusahaan'] = df['judul'].apply(extract_companies)
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
 
-# Metric Section
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Total Berita Terkumpul", len(df))
 m2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
@@ -174,7 +176,6 @@ else:
 
 st.divider()
 
-# Section Perusahaan
 st.subheader("🏢 Perusahaan Terkait dalam Berita Karhutla")
 
 if not df_company_only.empty:
@@ -215,7 +216,6 @@ else:
 
 st.divider()
 
-# Visualization Section
 col_left, col_right = st.columns([1, 1])
 
 with col_left:
@@ -253,7 +253,6 @@ with col_right:
 
 st.divider()
 
-# Interactive Table Section
 st.subheader("📰 Semua Daftar Berita")
 st.dataframe(
     df[['waktu_terbit', 'sumber', 'perusahaan', 'judul', 'link']].sort_values(by='waktu_terbit', ascending=False),

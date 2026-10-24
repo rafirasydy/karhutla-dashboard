@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 from sqlalchemy import create_engine
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "5141661421")
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///karhutla_trends.db")
 
@@ -13,8 +13,10 @@ def extract_companies(text):
     if not isinstance(text, str):
         return "Tidak Terdeteksi"
     
-    clean_text = re.sub(r'<[^>]+>', '', text)
-    pattern = r'\b(?:PT|CV)\.?\s+([A-Z0-9\.\&\-]+(?:\s+[A-Z0-9\.\&\-]+)*)'
+    clean_text = re.sub(r'<[^>]+>', ' ', text)
+    clean_text = re.sub(r'[·•|:-]', ' ', clean_text)
+    
+    pattern = r'\b(?:PT|CV)\.?\s+([A-Z][a-zA-Za-z0-9\.\&\-]*(?:\s+[A-Z][a-zA-Za-z0-9\.\&\-]*)*)'
     matches = re.findall(pattern, clean_text)
     
     stop_words = {
@@ -22,7 +24,7 @@ def extract_companies(text):
         'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 
         'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 
         'kebakaran', 'lahan', 'hutan', 'oleh', 'ke', 'google', 
-        'berita', 'dan', 'atau', 'untuk', 'pada', 'dari', 'dengan'
+        'berita', 'dan', 'atau', 'untuk', 'pada', 'dari', 'dengan', 'seperti'
     }
     
     found = set()
@@ -37,7 +39,7 @@ def extract_companies(text):
         if clean_words:
             comp_name = " ".join(clean_words).strip(' .-&')
             if len(comp_name) > 1 and comp_name.lower() not in stop_words:
-                found.add(f"PT {comp_name.upper()}")
+                found.add(f"PT {comp_name.title()}")
     
     if found:
         return ", ".join(sorted(list(found)))
@@ -57,7 +59,6 @@ def send_telegram_alert(judul, link):
 def run_etl():
     engine = create_engine(DB_URL)
     existing_links = set()
-    
     try:
         df_old = pd.read_sql('tren_karhutla', engine)
         existing_links = set(df_old['link'].dropna().tolist())
@@ -65,20 +66,20 @@ def run_etl():
         df_old = pd.DataFrame()
 
     queries = [
-        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=karhutla+PT&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=kebakaran+hutan+PT&hl=id&gl=ID&ceid=ID:id",
-        "https://news.google.com/rss/search?q=segel+lahan+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
+        "https://news.google.com/rss/search?q=perusahaan+yg+terlibat+karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=pembekuan+izin+karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=perusahaan+penyebab+karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=tersangka+karhutla+korporasi&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id"
     ]
 
     data = []
-    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi', 'tersangka']
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi', 'tersangka', 'dibekukan']
 
     for url in queries:
         feed = feedparser.parse(url)
         for entry in feed.entries:
             link = entry.link
-            
             if link in existing_links:
                 continue
 
@@ -103,20 +104,14 @@ def run_etl():
             })
 
     if not data and not df_old.empty:
-        if 'perusahaan' not in df_old.columns:
-            df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
+        df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
         df_old.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
-        print("Selesai: Tidak ada berita baru.")
         return
 
     df_new = pd.DataFrame(data)
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
-    
-    if 'perusahaan' not in df_combined.columns:
-        df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
-
+    df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
-    print(f"ETL Berhasil: Total {len(df_combined)} berita tersimpan di database.")
 
 if __name__ == "__main__":
     run_etl()
