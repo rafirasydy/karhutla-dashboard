@@ -61,7 +61,7 @@ def run_etl():
     existing_links = set()
     try:
         df_old = pd.read_sql('tren_karhutla', engine)
-        existing_links = set(df_old['link'].dropna().tolist())
+        existing_links = set(df_old['link'].dropna().astype(str).tolist())
     except Exception:
         df_old = pd.DataFrame()
 
@@ -79,14 +79,14 @@ def run_etl():
     for url in queries:
         feed = feedparser.parse(url)
         for entry in feed.entries:
-            link = entry.link
+            link = str(entry.link)
             if link in existing_links:
                 continue
 
-            judul = entry.title
-            sumber = entry.source.title if 'source' in entry else 'Unknown'
-            waktu = entry.published
-            summary = entry.summary if 'summary' in entry else ''
+            judul = str(entry.title) if 'title' in entry else ''
+            sumber = str(entry.source.title) if 'source' in entry else 'Unknown'
+            waktu = str(entry.published) if 'published' in entry else ''
+            summary = str(entry.summary) if 'summary' in entry else ''
             
             teks_lengkap = f"{judul} {summary}"
             perusahaan = extract_companies(teks_lengkap)
@@ -105,12 +105,18 @@ def run_etl():
 
     if not data and not df_old.empty:
         df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
+        for col in df_old.columns:
+            df_old[col] = df_old[col].astype(str)
         df_old.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
         return
 
     df_new = pd.DataFrame(data)
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
     df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
+
+    for col in df_combined.columns:
+        df_combined[col] = df_combined[col].astype(str)
+
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
 
 if __name__ == "__main__":

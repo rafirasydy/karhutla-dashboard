@@ -80,7 +80,7 @@ def run_etl_realtime():
     existing_links = set()
     try:
         df_old = pd.read_sql('tren_karhutla', engine)
-        existing_links = set(df_old['link'].dropna().tolist())
+        existing_links = set(df_old['link'].dropna().astype(str).tolist())
     except Exception:
         df_old = pd.DataFrame()
 
@@ -98,15 +98,15 @@ def run_etl_realtime():
     for url in queries:
         feed = feedparser.parse(url)
         for entry in feed.entries:
-            link = entry.link
+            link = str(entry.link)
             
             if link in existing_links:
                 continue
 
-            judul = entry.title
-            sumber = entry.source.title if 'source' in entry else 'Unknown'
-            waktu = entry.published
-            summary = entry.summary if 'summary' in entry else ''
+            judul = str(entry.title) if 'title' in entry else ''
+            sumber = str(entry.source.title) if 'source' in entry else 'Unknown'
+            waktu = str(entry.published) if 'published' in entry else ''
+            summary = str(entry.summary) if 'summary' in entry else ''
             
             teks_lengkap = f"{judul} {summary}"
             perusahaan = extract_companies(teks_lengkap)
@@ -127,9 +127,12 @@ def run_etl_realtime():
         return df_old
 
     df_new = pd.DataFrame(data)
-
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
     df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
+
+    # Sanitasi semua kolom ke string standar agar tidak error saat to_sql
+    for col in df_combined.columns:
+        df_combined[col] = df_combined[col].astype(str)
 
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
     return df_combined
@@ -153,10 +156,10 @@ if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
 else:
     df = load_data()
 
-# Konversi kolom waktu_terbit secara aman
+# Parse datetime untuk visualisasi UI
 df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce', utc=True)
-
 df['perusahaan'] = df['judul'].apply(extract_companies)
+
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
 
