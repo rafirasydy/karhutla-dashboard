@@ -27,7 +27,7 @@ def get_db_engine():
         return create_engine("sqlite:///karhutla_trends.db")
 
 def send_telegram_alert(judul, link):
-    if TELEGRAM_TOKEN == "TOKEN_BOT_KAMU":
+    if TELEGRAM_TOKEN == "TOKEN_BOT_KAMU" or not TELEGRAM_TOKEN:
         return
     message = f"⚠️ *PERINGATAN KARHUTLA DARURAT!*\n\n📰 *Judul:* {judul}\n🔗 *Baca:* {link}"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -62,13 +62,14 @@ def run_etl_realtime():
         })
 
     df_new = pd.DataFrame(data)
-    df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'])
+    if not df_new.empty:
+        df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
 
     try:
         engine = get_db_engine()
         try:
             df_old = pd.read_sql('tren_karhutla', engine)
-            df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'])
+            df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
             df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
         except Exception:
             df_combined = df_new
@@ -90,11 +91,19 @@ if st.sidebar.button("🔄 Refresh Data Sekarang", use_container_width=True):
 with st.spinner('Narik data terbaru...'):
     df = run_etl_realtime()
 
+# Pastikan kolom waktu_terbit selalu bertipe datetime
+df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
+
 # Metric Section
 m1, m2, m3 = st.columns(3)
 m1.metric("Total Berita Terkumpul", len(df))
 m2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
-m3.metric("Berita Terbaru", df['waktu_terbit'].max().strftime('%d %b %Y %H:%M'))
+
+latest_time = df['waktu_terbit'].max()
+if pd.notnull(latest_time):
+    m3.metric("Berita Terbaru", latest_time.strftime('%d %b %Y %H:%M'))
+else:
+    m3.metric("Berita Terbaru", "-")
 
 st.divider()
 
