@@ -2,12 +2,27 @@ import streamlit as st
 import feedparser
 import pandas as pd
 import os
+import requests
 from sqlalchemy import create_engine
 
-st.set_page_config(page_title="Dashboard Karhutla (Docker Compose)", layout="wide")
+st.set_page_config(page_title="Dashboard Karhutla (Telegram Alert)", layout="wide")
 
-# Baca DB_URL dari environment variable Docker, fallback ke localhost jika dijalankan manual
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
+
+# Konfigurasi Telegram Bot
+TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
+TELEGRAM_CHAT_ID = "5141661421"
+
+def send_telegram_alert(judul, link):
+    if TELEGRAM_TOKEN == "TOKEN_BOT_KAMU":
+        return
+    message = f"⚠️ *PERINGATAN KARHUTLA DARURAT!*\n\n📰 *Judul:* {judul}\n🔗 *Baca:* {link}"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"Gagal kirim notifikasi: {e}")
 
 @st.cache_data(ttl=600)
 def run_etl_realtime():
@@ -15,12 +30,23 @@ def run_etl_realtime():
     feed = feedparser.parse(url)
 
     data = []
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan']
+
     for entry in feed.entries:
+        judul = entry.title
+        sumber = entry.source.title if 'source' in entry else 'Unknown'
+        waktu = entry.published
+        link = entry.link
+
+        # Cek kata kunci darurat & kirim notifikasi Telegram
+        if any(kw in judul.lower() for kw in keywords_darurat):
+            send_telegram_alert(judul, link)
+
         data.append({
-            'judul': entry.title,
-            'sumber': entry.source.title if 'source' in entry else 'Unknown',
-            'waktu_terbit': entry.published,
-            'link': entry.link
+            'judul': judul,
+            'sumber': sumber,
+            'waktu_terbit': waktu,
+            'link': link
         })
 
     df = pd.DataFrame(data)
@@ -31,13 +57,13 @@ def run_etl_realtime():
 
     return df
 
-st.title("🔥 Dashboard Monitoring Karhutla (Multi-Container Docker)")
-st.caption("Aplikasi Streamlit dan PostgreSQL berjalan bersamaan via Docker Compose.")
+st.title("🔥 Dashboard Monitoring Karhutla (+ Telegram Alert)")
+st.caption("Aplikasi ini otomatis ngirim pesan ke Telegram kalau nemu berita berstatus darurat.")
 
 if st.sidebar.button("🔄 Refresh Data Sekarang"):
     st.cache_data.clear()
 
-with st.spinner('Narik data terbaru ke PostgreSQL...'):
+with st.spinner('Narik data terbaru...'):
     df = run_etl_realtime()
 
 col1, col2 = st.columns(2)
