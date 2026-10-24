@@ -28,7 +28,6 @@ def get_db_engine():
         return create_engine("sqlite:///karhutla_trends.db")
 
 def extract_companies(text):
-    # Ekstraksi pola nama perusahaan (contoh: PT Sampoerna, PT. Mayawana Persada)
     pattern = r'\bPT\.?\s+[A-Z][a-zA-Z0-9\.\&\-]+(?:\s+[A-Z][a-zA-Z0-9\.\&\-]+)*'
     matches = re.findall(pattern, text)
     if matches:
@@ -48,29 +47,34 @@ def send_telegram_alert(judul, link):
 
 @st.cache_data(ttl=600)
 def run_etl_realtime():
-    url = "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id"
-    feed = feedparser.parse(url)
+    # Ambil berita karhutla umum + berita khusus perusahaan/PT
+    queries = [
+        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=karhutla+PT+OR+kebakaran+hutan+PT+OR+segel+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
+    ]
 
     data = []
-    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan']
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi']
 
-    for entry in feed.entries:
-        judul = entry.title
-        sumber = entry.source.title if 'source' in entry else 'Unknown'
-        waktu = entry.published
-        link = entry.link
-        perusahaan = extract_companies(judul)
+    for url in queries:
+        feed = feedparser.parse(url)
+        for entry in feed.entries:
+            judul = entry.title
+            sumber = entry.source.title if 'source' in entry else 'Unknown'
+            waktu = entry.published
+            link = entry.link
+            perusahaan = extract_companies(judul)
 
-        if any(kw in judul.lower() for kw in keywords_darurat):
-            send_telegram_alert(judul, link)
+            if any(kw in judul.lower() for kw in keywords_darurat):
+                send_telegram_alert(judul, link)
 
-        data.append({
-            'judul': judul,
-            'sumber': sumber,
-            'waktu_terbit': waktu,
-            'link': link,
-            'perusahaan': perusahaan
-        })
+            data.append({
+                'judul': judul,
+                'sumber': sumber,
+                'waktu_terbit': waktu,
+                'link': link,
+                'perusahaan': perusahaan
+            })
 
     df_new = pd.DataFrame(data)
     if not df_new.empty:
@@ -108,7 +112,6 @@ df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
 if 'perusahaan' not in df.columns:
     df['perusahaan'] = df['judul'].apply(extract_companies)
 
-# Hitung jumlah perusahaan terdeteksi
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
 

@@ -28,29 +28,33 @@ def send_telegram_alert(judul, link):
         print(f"Gagal kirim alert: {e}")
 
 def run_etl():
-    url = "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id"
-    feed = feedparser.parse(url)
+    queries = [
+        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=karhutla+PT+OR+kebakaran+hutan+PT+OR+segel+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
+    ]
 
     data = []
-    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan']
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi']
 
-    for entry in feed.entries:
-        judul = entry.title
-        sumber = entry.source.title if 'source' in entry else 'Unknown'
-        waktu = entry.published
-        link = entry.link
-        perusahaan = extract_companies(judul)
+    for url in queries:
+        feed = feedparser.parse(url)
+        for entry in feed.entries:
+            judul = entry.title
+            sumber = entry.source.title if 'source' in entry else 'Unknown'
+            waktu = entry.published
+            link = entry.link
+            perusahaan = extract_companies(judul)
 
-        if any(kw in judul.lower() for kw in keywords_darurat):
-            send_telegram_alert(judul, link)
+            if any(kw in judul.lower() for kw in keywords_darurat):
+                send_telegram_alert(judul, link)
 
-        data.append({
-            'judul': judul,
-            'sumber': sumber,
-            'waktu_terbit': waktu,
-            'link': link,
-            'perusahaan': perusahaan
-        })
+            data.append({
+                'judul': judul,
+                'sumber': sumber,
+                'waktu_terbit': waktu,
+                'link': link,
+                'perusahaan': perusahaan
+            })
 
     df_new = pd.DataFrame(data)
     if df_new.empty:
