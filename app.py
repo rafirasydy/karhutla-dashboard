@@ -3,9 +3,10 @@ import feedparser
 import pandas as pd
 import os
 import requests
+import plotly.express as px
 from sqlalchemy import create_engine
 
-st.set_page_config(page_title="Dashboard Karhutla (+ Telegram Alert)", layout="wide")
+st.set_page_config(page_title="Dashboard Karhutla Real-Time", layout="wide", page_icon="🔥")
 
 try:
     TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
@@ -65,16 +66,13 @@ def run_etl_realtime():
 
     try:
         engine = get_db_engine()
-        
-        # Baca data lama dari DB kalau ada
         try:
             df_old = pd.read_sql('tren_karhutla', engine)
-            # Gabungkan data lama & baru, lalu hapus duplikat berdasarkan link
+            df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'])
             df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
         except Exception:
             df_combined = df_new
 
-        # Simpan kembali akumulasi data secara utuh
         df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
         return df_combined
 
@@ -82,24 +80,73 @@ def run_etl_realtime():
         print(f"Gagal simpan ke DB: {e}")
         return df_new
 
-st.title("🔥 Dashboard Monitoring Karhutla (+ Telegram Alert)")
-st.caption("Aplikasi ini otomatis akumulasi data berita dan ngirim alert Telegram.")
+# --- TAMPILAN DASHBOARD ---
+st.title("🔥 Dashboard Monitoring Karhutla Real-Time")
+st.caption("Monitoring publikasi media massa terkait Karhutla dan otomatisasi alert Telegram.")
 
-if st.sidebar.button("🔄 Refresh Data Sekarang"):
+if st.sidebar.button("🔄 Refresh Data Sekarang", use_container_width=True):
     st.cache_data.clear()
 
 with st.spinner('Narik data terbaru...'):
     df = run_etl_realtime()
 
-col1, col2 = st.columns(2)
-col1.metric("Total Berita Terkumpul (Akumulatif)", len(df))
-col2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
+# Metric Section
+m1, m2, m3 = st.columns(3)
+m1.metric("Total Berita Terkumpul", len(df))
+m2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
+m3.metric("Berita Terbaru", df['waktu_terbit'].max().strftime('%d %b %Y %H:%M'))
 
 st.divider()
 
-st.subheader("📊 5 Media Paling Aktif Mengabarkan Karhutla")
-media_counts = df['sumber'].value_counts().head(5)
-st.bar_chart(media_counts)
+# Visualization Section
+col_left, col_right = st.columns([1, 1])
 
+with col_left:
+    st.subheader("📊 Top 10 Media Paling Aktif")
+    media_counts = df['sumber'].value_counts().head(10).reset_index()
+    media_counts.columns = ['Media', 'Jumlah Berita']
+    
+    fig_bar = px.bar(
+        media_counts,
+        x='Jumlah Berita',
+        y='Media',
+        orientation='h',
+        color='Jumlah Berita',
+        color_continuous_scale='Reds',
+        text='Jumlah Berita'
+    )
+    fig_bar.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False, height=400)
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+with col_right:
+    st.subheader("📈 Tren Publikasi Berita")
+    df['tanggal'] = df['waktu_terbit'].dt.date
+    trend_df = df.groupby('tanggal').size().reset_index(name='Jumlah Berita')
+    
+    fig_line = px.line(
+        trend_df,
+        x='tanggal',
+        y='Jumlah Berita',
+        markers=True,
+        line_shape='spline',
+        color_discrete_sequence=['#FF4B4B']
+    )
+    fig_line.update_layout(height=400, xaxis_title="Tanggal", yaxis_title="Jumlah Berita")
+    st.plotly_chart(fig_line, use_container_width=True)
+
+st.divider()
+
+# Interactive Table Section
 st.subheader("📰 Daftar Berita Terbaru")
-st.dataframe(df[['sumber', 'judul', 'waktu_terbit', 'link']], height=300)
+st.dataframe(
+    df[['waktu_terbit', 'sumber', 'judul', 'link']].sort_values(by='waktu_terbit', ascending=False),
+    column_config={
+        "waktu_terbit": st.column_config.DatetimeColumn("Waktu Terbit", format="DD MMM YYYY, HH:mm"),
+        "sumber": "Sumber Media",
+        "judul": "Judul Berita",
+        "link": st.column_config.LinkColumn("Akses Berita", display_text="Buka Artikel 🔗")
+    },
+    use_container_width=True,
+    height=350,
+    hide_index=True
+)

@@ -1,15 +1,23 @@
-# 🔥 Monitoring Isu Karhutla - ETL Pipeline & Dashboard
+# 🔥 Real-time Karhutla Monitoring & Alert Dashboard
 
-Proyek Data Engineering sederhana untuk memantau tren dan berita terkini mengenai Kebakaran Hutan dan Lahan (Karhutla) secara otomatis.
+Dashboard monitoring berita Karhutla (Kebakaran Hutan dan Lahan) secara real-time yang dilengkapi dengan pipeline ETL otomatis, penyimpanan database PostgreSQL, kontainerisasi Docker Compose, serta sistem notifikasi darurat via Telegram Bot.
 
-## 🛠️ Tech Stack
-- **Language**: Python 3
-- **Data Pipeline**: `feedparser`, `pandas` (ETL Process)
-- **Database**: SQLite
-- **Visualization**: Streamlit
+## 🏗️ Arsitektur & Tech Stack
+* **Language & Framework:** Python, Streamlit
+* **Database:** PostgreSQL (Docker) & SQLite (Fallback Cloud)
+* **Containerization:** Docker & Docker Compose
+* **Notification:** Telegram Bot API
+* **Deployment:** Streamlit Community Cloud
 
-## 🚀 Cara Menjalankan Project
+## ✨ Fitur Utama
+* **Real-time Ingestion:** Penarikan otomatis berita Karhutla via RSS Feed.
+* **Storage Integration:** Penyimpanan data terstruktur ke database PostgreSQL/SQLite.
+* **Interactive Dashboard:** Visualisasi statistik media dan daftar berita interaktif.
+* **Emergency Alerts:** Kirim notifikasi otomatis ke Telegram untuk berita berkategori darurat/siaga.
 
-1. **Clone repository ini & install dependency:**
+## 🚀 Cara Menjalankan (Lokal via Docker)
+
+1. **Clone Repositori**
    ```bash
-   pip install -r requirements.txt
+   git clone [https://github.com/rafirasydy/karhutla-dashboard.git](https://github.com/rafirasydy/karhutla-dashboard.git)
+   cd karhutla-dashboard
