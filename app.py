@@ -80,7 +80,6 @@ def run_etl_realtime():
     existing_links = set()
     try:
         df_old = pd.read_sql('tren_karhutla', engine)
-        df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
         existing_links = set(df_old['link'].dropna().tolist())
     except Exception:
         df_old = pd.DataFrame()
@@ -125,12 +124,9 @@ def run_etl_realtime():
             })
 
     if not data and not df_old.empty:
-        df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
         return df_old
 
     df_new = pd.DataFrame(data)
-    if not df_new.empty:
-        df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
 
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
     df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
@@ -143,8 +139,6 @@ def load_data():
     engine = get_db_engine()
     try:
         df = pd.read_sql('tren_karhutla', engine)
-        df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
-        df['perusahaan'] = df['judul'].apply(extract_companies)
         return df
     except Exception:
         return run_etl_realtime()
@@ -159,6 +153,9 @@ if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
 else:
     df = load_data()
 
+# Konversi kolom waktu_terbit secara aman
+df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce', utc=True)
+
 df['perusahaan'] = df['judul'].apply(extract_companies)
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
@@ -168,8 +165,9 @@ m1.metric("Total Berita Terkumpul", len(df))
 m2.metric("Jumlah Media Terlibat", df['sumber'].nunique())
 m3.metric("Perusahaan Terdeteksi", total_companies_found)
 
-latest_time = df['waktu_terbit'].max()
-if pd.notnull(latest_time):
+valid_times = df['waktu_terbit'].dropna()
+if not valid_times.empty:
+    latest_time = valid_times.max()
     m4.metric("Berita Terbaru", latest_time.strftime('%d %b %Y %H:%M'))
 else:
     m4.metric("Berita Terbaru", "-")
