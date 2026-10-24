@@ -12,12 +12,14 @@ DB_URL = os.getenv("DATABASE_URL", "sqlite:///karhutla_trends.db")
 def extract_companies(text):
     if not isinstance(text, str):
         return "Tidak Terdeteksi"
-    clean_text = re.sub(r'<[^>]+>', '', text)
-    pattern = r'\b(?:PT|CV)\.?\s*([A-Za-z0-9\.\&\-]+(?:\s+[A-Za-z0-9\.\&\-]+)*)'
-    matches = re.findall(pattern, clean_text)
-    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan', 'oleh', 'ke'}
     
-    found = []
+    clean_text = re.sub(r'<[^>]+>', '', text)
+    pattern = r'\b(?:PT|CV)\.?\s+([A-Z0-9\.\&\-]+(?:\s+[A-Z0-9\.\&\-]+)*)'
+    matches = re.findall(pattern, clean_text)
+    
+    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan', 'oleh', 'ke', 'google', 'berita', 'dan', 'atau', 'untuk', 'pada', 'dari', 'dengan'}
+    
+    found = set()
     for match in matches:
         words = match.split()
         clean_words = []
@@ -28,11 +30,11 @@ def extract_companies(text):
             clean_words.append(clean_w)
         if clean_words:
             comp_name = " ".join(clean_words).strip(' .-&')
-            if len(comp_name) > 1:
-                found.append(f"PT {comp_name.upper()}")
+            if len(comp_name) > 1 and comp_name.lower() not in stop_words:
+                found.add(f"PT {comp_name.upper()}")
     
     if found:
-        return ", ".join(list(set(found)))
+        return ", ".join(sorted(list(found)))
     return "Tidak Terdeteksi"
 
 def send_telegram_alert(judul, link):
@@ -92,11 +94,16 @@ def run_etl():
                 'perusahaan': perusahaan
             })
 
-    if not data:
+    if not data and not df_old.empty:
+        if 'perusahaan' not in df_old.columns:
+            df_old['perusahaan'] = df_old['judul'].apply(extract_companies)
+        df_old.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
         return
 
     df_new = pd.DataFrame(data)
     df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
+    if 'perusahaan' not in df_combined.columns:
+        df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
     df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
 
 if __name__ == "__main__":

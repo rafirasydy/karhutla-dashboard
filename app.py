@@ -13,7 +13,7 @@ try:
     TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
     TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 except Exception:
-    TELEGRAM_TOKEN = "TOKEN_BOT_KAMU"
+    TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
     TELEGRAM_CHAT_ID = "5141661421"
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
@@ -32,12 +32,12 @@ def extract_companies(text):
         return "Tidak Terdeteksi"
     
     clean_text = re.sub(r'<[^>]+>', '', text)
-    pattern = r'\b(?:PT|CV)\.?\s*([A-Za-z0-9\.\&\-]+(?:\s+[A-Za-z0-9\.\&\-]+)*)'
+    pattern = r'\b(?:PT|CV)\.?\s+([A-Z0-9\.\&\-]+(?:\s+[A-Z0-9\.\&\-]+)*)'
     matches = re.findall(pattern, clean_text)
     
-    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan', 'oleh', 'ke'}
+    stop_words = {'terkait', 'di', 'yang', 'karena', 'atas', 'dalam', 'disegel', 'tersangka', 'resmi', 'bakar', 'diduga', 'soal', 'akibat', 'hingga', 'jadi', 'kembali', 'milik', 'sanksi', 'kasus', 'kebakaran', 'lahan', 'hutan', 'oleh', 'ke', 'google', 'berita', 'dan', 'atau', 'untuk', 'pada', 'dari', 'dengan'}
     
-    found = []
+    found = set()
     for match in matches:
         words = match.split()
         clean_words = []
@@ -48,11 +48,11 @@ def extract_companies(text):
             clean_words.append(clean_w)
         if clean_words:
             comp_name = " ".join(clean_words).strip(' .-&')
-            if len(comp_name) > 1:
-                found.append(f"PT {comp_name.upper()}")
+            if len(comp_name) > 1 and comp_name.lower() not in stop_words:
+                found.add(f"PT {comp_name.upper()}")
     
     if found:
-        return ", ".join(list(set(found)))
+        return ", ".join(sorted(list(found)))
     return "Tidak Terdeteksi"
 
 def send_telegram_alert(judul, link):
@@ -154,7 +154,6 @@ if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
 else:
     df = load_data()
 
-# Pastikan kolom 'perusahaan' selalu tersedia di DataFrame
 if 'perusahaan' not in df.columns:
     df['perusahaan'] = df['judul'].apply(extract_companies) if 'judul' in df.columns else "Tidak Terdeteksi"
 
@@ -212,7 +211,7 @@ if not df_company_only.empty:
             hide_index=True
         )
 else:
-    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam judul/ringkasan berita database saat ini.")
+    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam berita database saat ini.")
 
 st.divider()
 
