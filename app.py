@@ -1,11 +1,20 @@
 import streamlit as st
+import feedparser
 import pandas as pd
 import os
+import requests
 import re
 import plotly.express as px
 from sqlalchemy import create_engine
 
 st.set_page_config(page_title="Dashboard Karhutla Real-Time", layout="wide", page_icon="🔥")
+
+try:
+    TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
+    TELEGRAM_CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
+except Exception:
+    TELEGRAM_TOKEN = "TOKEN_BOT_KAMU"
+    TELEGRAM_CHAT_ID = "5141661421"
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
 
@@ -27,31 +36,84 @@ def extract_companies(text):
         return ", ".join(list(set(matches)))
     return "Tidak Terdeteksi"
 
-@st.cache_data(ttl=180)
-def load_data_from_db():
+def send_telegram_alert(judul, link):
+    if TELEGRAM_TOKEN == "TOKEN_BOT_KAMU" or not TELEGRAM_TOKEN:
+        return
+    message = f"⚠️ *PERINGATAN KARHUTLA DARURAT!*\n\n📰 *Judul:* {judul}\n🔗 *Baca:* {link}"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Gagal kirim notifikasi: {e}")
+
+def run_etl_realtime():
+    queries = [
+        "https://news.google.com/rss/search?q=karhutla&hl=id&gl=ID&ceid=ID:id",
+        "https://news.google.com/rss/search?q=karhutla+PT+OR+kebakaran+hutan+PT+OR+segel+PT+karhutla&hl=id&gl=ID&ceid=ID:id"
+    ]
+
+    data = []
+    keywords_darurat = ['siaga', 'darurat', 'evakuasi', 'parah', 'kritis', 'hebat', 'kebakaran', 'riau', 'kalimantan', 'segel', 'sanksi']
+
+    for url in queries:
+        feed = feedparser.parse(url)
+        for entry in feed.entries:
+            judul = entry.title
+            sumber = entry.source.title if 'source' in entry else 'Unknown'
+            waktu = entry.published
+            link = entry.link
+            perusahaan = extract_companies(judul)
+
+            if any(kw in judul.lower() for kw in keywords_darurat):
+                send_telegram_alert(judul, link)
+
+            data.append({
+                'judul': judul,
+                'sumber': sumber,
+                'waktu_terbit': waktu,
+                'link': link,
+                'perusahaan': perusahaan
+            })
+
+    df_new = pd.DataFrame(data)
+    if not df_new.empty:
+        df_new['waktu_terbit'] = pd.to_datetime(df_new['waktu_terbit'], errors='coerce')
+
+    engine = get_db_engine()
+    try:
+        df_old = pd.read_sql('tren_karhutla', engine)
+        df_old['waktu_terbit'] = pd.to_datetime(df_old['waktu_terbit'], errors='coerce')
+        df_combined = pd.concat([df_old, df_new]).drop_duplicates(subset=['link'], keep='first')
+    except Exception:
+        df_combined = df_new
+
+    df_combined['perusahaan'] = df_combined['judul'].apply(extract_companies)
+    df_combined.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+    return df_combined
+
+@st.cache_data(ttl=300)
+def load_data():
     engine = get_db_engine()
     try:
         df = pd.read_sql('tren_karhutla', engine)
         df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'], errors='coerce')
-        if 'perusahaan' not in df.columns:
-            df['perusahaan'] = df['judul'].apply(extract_companies)
+        # Deteksi nama perusahaan di semua berita yang tersimpan
+        df['perusahaan'] = df['judul'].apply(extract_companies)
         return df
-    except Exception as e:
-        st.error(f"Gagal membaca data dari database: {e}")
-        return pd.DataFrame(columns=['judul', 'sumber', 'waktu_terbit', 'link', 'perusahaan'])
+    except Exception:
+        return run_etl_realtime()
 
 # --- TAMPILAN DASHBOARD ---
 st.title("🔥 Dashboard Monitoring Karhutla Real-Time")
 st.caption("Monitoring berita Karhutla, indikasi keterlibatan perusahaan, dan otomatisasi alert Telegram.")
 
-if st.sidebar.button("🔄 Refresh Tampilan", use_container_width=True):
+if st.sidebar.button("🔄 Tarik Data Terbaru", use_container_width=True):
     st.cache_data.clear()
-
-df = load_data_from_db()
-
-if df.empty:
-    st.warning("Data belum tersedia di database. Menunggu pipeline otomatis GitHub Actions berjalan...")
-    st.stop()
+    with st.spinner('Narik berita terbaru dari Google News...'):
+        df = run_etl_realtime()
+else:
+    df = load_data()
 
 df_company_only = df[df['perusahaan'] != 'Tidak Terdeteksi']
 total_companies_found = df_company_only['perusahaan'].nunique()
@@ -107,7 +169,7 @@ if not df_company_only.empty:
             hide_index=True
         )
 else:
-    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam judul berita database.")
+    st.info("Belum ada nama perusahaan (PT) yang terdeteksi spesifik di dalam judul berita database saat ini.")
 
 st.divider()
 
