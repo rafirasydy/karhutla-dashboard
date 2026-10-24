@@ -5,13 +5,23 @@ import os
 import requests
 from sqlalchemy import create_engine
 
-st.set_page_config(page_title="Dashboard Karhutla (Telegram Alert)", layout="wide")
+st.set_page_config(page_title="Dashboard Karhutla (+ Telegram Alert)", layout="wide")
+
+# Ambil kredensial Telegram dari Streamlit Secrets jika ada, atau fallback ke variabel lokal
+TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN", "TOKEN_BOT_KAMU")
+TELEGRAM_CHAT_ID = st.secrets.get("TELEGRAM_CHAT_ID", "5141661421")
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres")
 
-# Konfigurasi Telegram Bot
-TELEGRAM_TOKEN = "8892672599:AAGN5qaTrPP1G3h4xOmV30VceyZBXKvQTUY"
-TELEGRAM_CHAT_ID = "5141661421"
+def get_db_engine():
+    # Coba konek ke PostgreSQL (buat di Docker lokal), kalau gagal otomatis pakai SQLite (buat Streamlit Cloud)
+    try:
+        engine = create_engine(DB_URL)
+        with engine.connect() as conn:
+            pass
+        return engine
+    except Exception:
+        return create_engine("sqlite:///karhutla_trends.db")
 
 def send_telegram_alert(judul, link):
     if TELEGRAM_TOKEN == "TOKEN_BOT_KAMU":
@@ -20,7 +30,7 @@ def send_telegram_alert(judul, link):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Gagal kirim notifikasi: {e}")
 
@@ -38,7 +48,6 @@ def run_etl_realtime():
         waktu = entry.published
         link = entry.link
 
-        # Cek kata kunci darurat & kirim notifikasi Telegram
         if any(kw in judul.lower() for kw in keywords_darurat):
             send_telegram_alert(judul, link)
 
@@ -52,8 +61,11 @@ def run_etl_realtime():
     df = pd.DataFrame(data)
     df['waktu_terbit'] = pd.to_datetime(df['waktu_terbit'])
 
-    engine = create_engine(DB_URL)
-    df.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+    try:
+        engine = get_db_engine()
+        df.to_sql('tren_karhutla', engine, if_exists='replace', index=False)
+    except Exception as e:
+        print(f"Gagal simpan ke DB: {e}")
 
     return df
 
